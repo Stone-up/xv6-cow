@@ -65,6 +65,10 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 15){
+    uint64 va = r_stval();
+    if(cowhandler(p->pagetable, va) == -1)
+      setkilled(p);
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -219,3 +223,32 @@ devintr()
   }
 }
 
+int cowhandler(pagetable_t pagetable, uint64 va) {
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *mem;
+
+  va = PGROUNDDOWN(va);
+
+  if (va >= MAXVA)
+    return -1;
+  if((pte = walk(pagetable, va, 0)) == 0)
+    return -1;
+  if (!(*pte & PTE_COW))
+    return -1;
+  if ((mem = kalloc()) == 0)
+    return -1;
+
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+  flags &= ~PTE_COW;
+  flags |= PTE_W;
+  
+  memmove(mem, (char *)pa, PGSIZE);
+  uvmunmap(pagetable, va, 1, 1);
+  if(mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0)
+    return -1;
+
+  return 0;
+}
